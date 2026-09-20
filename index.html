@@ -1,0 +1,177 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>RE-CYCLE AI | Industrial Interface v2.0</title>
+    <script src="https://cdn.jsdelivr.net/npm/@tensorflow/tfjs"></script>
+    <script src="https://cdn.jsdelivr.net/npm/@teachablemachine/image"></script>
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/three.js/r128/three.min.js"></script>
+    <script src="https://cdn.jsdelivr.net/npm/chart.js"></script>
+    <style>
+        :root { --neon: #00f2fe; --bg: #050505; --panel: rgba(15, 15, 20, 0.9); --border: rgba(0, 242, 254, 0.3); }
+        body { margin: 0; background: var(--bg); color: #fff; font-family: 'Inter', 'Segoe UI', sans-serif; overflow: hidden; }
+        
+        /* Layout Grid */
+        #dashboard-container { 
+            display: grid; 
+            grid-template-columns: 1fr 400px; 
+            grid-template-rows: auto 1fr;
+            height: 100vh; 
+            width: 100vw;
+            position: absolute;
+            z-index: 10;
+            pointer-events: none;
+            gap: 20px;
+            padding: 20px;
+            box-sizing: border-box;
+        }
+
+        .panel { 
+            background: var(--panel); 
+            backdrop-filter: blur(12px); 
+            border: 1px solid var(--border); 
+            padding: 25px; 
+            pointer-events: auto;
+            border-radius: 4px;
+        }
+
+        /* Elements */
+        h1 { font-size: 1.2rem; letter-spacing: 4px; color: var(--neon); margin: 0 0 20px 0; text-transform: uppercase; border-bottom: 1px solid var(--border); padding-bottom: 10px; }
+        #video-feed { width: 100%; border: 2px solid var(--neon); border-radius: 2px; box-shadow: 0 0 20px rgba(0, 242, 254, 0.2); transform: scaleX(-1); }
+        
+        .status-display { margin-top: 20px; }
+        .label-main { font-size: 3rem; font-weight: 900; color: #fff; text-shadow: 0 0 15px var(--neon); }
+        
+        .stats-grid { display: grid; grid-template-columns: 1fr 1fr; gap: 15px; margin-top: 20px; }
+        .stat-card { background: rgba(255,255,255,0.05); padding: 15px; border-left: 4px solid var(--neon); }
+        .stat-value { font-size: 2rem; font-weight: bold; display: block; }
+        .stat-name { font-size: 0.7rem; text-transform: uppercase; opacity: 0.7; letter-spacing: 1px; }
+
+        button { 
+            width: 100%; padding: 15px; background: transparent; border: 1px solid var(--neon); 
+            color: var(--neon); cursor: pointer; font-weight: bold; letter-spacing: 2px; transition: 0.3s;
+        }
+        button:hover { background: var(--neon); color: #000; }
+
+        canvas#chartCanvas { width: 100% !important; height: 200px !important; }
+    </style>
+</head>
+<body>
+    <div id="dashboard-container">
+        <div class="panel" style="grid-column: span 2;">
+            <h1>RE-CYCLE AI // HYPER-SENSE SYSTEM v2.0</h1>
+        </div>
+
+        <div class="panel">
+            <div id="camera-container"></div>
+            <div class="status-display">
+                <span class="stat-name">Current Classification</span>
+                <div id="result-label" class="label-main">IDLE_SCAN</div>
+            </div>
+        </div>
+
+        <div class="panel" style="display: flex; flex-direction: column; gap: 20px;">
+            <button onclick="startAI()" id="init-btn">INITIALIZE CORE SENSORS</button>
+            
+            <div>
+                <span class="stat-name">Material Accumulation</span>
+                <div class="stats-grid">
+                    <div class="stat-card"><span class="stat-value" id="count-plastic">0</span><span class="stat-name">Plastic</span></div>
+                    <div class="stat-card"><span class="stat-value" id="count-paper">0</span><span class="stat-name">Paper</span></div>
+                    <div class="stat-card"><span class="stat-value" id="count-metal">0</span><span class="stat-name">Metal</span></div>
+                    <div class="stat-card"><span class="stat-value" id="count-other">0</span><span class="stat-name">Other</span></div>
+                </div>
+            </div>
+
+            <div>
+                <span class="stat-name">Confidence Pulse</span>
+                <canvas id="chartCanvas"></canvas>
+            </div>
+        </div>
+    </div>
+
+    <script>
+        // --- 1. 3D BACKGROUND ---
+        const scene = new THREE.Scene();
+        const camera = new THREE.PerspectiveCamera(75, window.innerWidth/window.innerHeight, 0.1, 1000);
+        const renderer = new THREE.WebGLRenderer({ antialias: true, alpha: true });
+        renderer.setSize(window.innerWidth, window.innerHeight);
+        document.body.appendChild(renderer.domElement);
+
+        const geometry = new THREE.TorusKnotGeometry(15, 0.5, 200, 32);
+        const material = new THREE.MeshBasicMaterial({ color: 0x00f2fe, wireframe: true, transparent: true, opacity: 0.15 });
+        const object = new THREE.Mesh(geometry, material);
+        scene.add(object);
+        camera.position.z = 40;
+
+        function animate() {
+            requestAnimationFrame(animate);
+            object.rotation.y += 0.002;
+            object.rotation.x += 0.001;
+            renderer.render(scene, camera);
+        }
+        animate();
+
+        // --- 2. DATA TRACKING & CHART ---
+        let counts = { plastic: 0, paper: 0, metal: 0, other: 0 };
+        const ctx = document.getElementById('chartCanvas').getContext('2d');
+        const scatterChart = new Chart(ctx, {
+            type: 'line',
+            data: { datasets: [{ label: 'Confidence', data: [], borderColor: '#00f2fe', tension: 0.4, pointRadius: 0 }] },
+            options: { 
+                responsive: true, maintainAspectRatio: false,
+                scales: { x: { display: false }, y: { min: 0, max: 100, grid: { color: 'rgba(255,255,255,0.05)' } } },
+                plugins: { legend: { display: false } }
+            }
+        });
+
+        // --- 3. AI LOGIC ---
+        const MODEL_URL = "https://teachablemachine.withgoogle.com/models/v_9L6m7v-/"; 
+        let model, webcam;
+
+        async function startAI() {
+            document.getElementById('init-btn').innerText = "CORE ACTIVE";
+            model = await tmImage.load(MODEL_URL + "model.json", MODEL_URL + "metadata.json");
+            webcam = new tmImage.Webcam(480, 480, true);
+            await webcam.setup();
+            await webcam.play();
+            document.getElementById("camera-container").appendChild(webcam.canvas);
+            webcam.canvas.id = "video-feed";
+            window.requestAnimationFrame(loop);
+        }
+
+        async function loop() {
+            webcam.update();
+            await predict();
+            window.requestAnimationFrame(loop);
+        }
+
+        let lastDetected = "";
+        async function predict() {
+            const prediction = await model.predict(webcam.canvas);
+            prediction.sort((a, b) => b.probability - a.probability);
+            const result = prediction[0];
+
+            if (result.probability > 0.85) {
+                const label = result.className.toLowerCase();
+                document.getElementById("result-label").innerText = label.toUpperCase();
+                
+                // Logic to update counts once per detection
+                if (label !== lastDetected && label !== "background") {
+                    if (counts.hasOwnProperty(label)) {
+                        counts[label]++;
+                        document.getElementById(`count-${label}`).innerText = counts[label];
+                    }
+                    lastDetected = label;
+                }
+            }
+
+            // Update Chart
+            if(scatterChart.data.datasets[0].data.length > 30) scatterChart.data.datasets[0].data.shift();
+            scatterChart.data.datasets[0].data.push(result.probability * 100);
+            scatterChart.update('none');
+        }
+    </script>
+</body>
+</html>
